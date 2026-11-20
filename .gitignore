@@ -1,0 +1,19 @@
+.vscode/
+.idea/
+.env
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+.coverage
+.ruff_cache
+.pytest_cache
+_version.py
+.DS_Store
+
+# Local data, caches and checkpoints
+loader_cache/
+*.pth

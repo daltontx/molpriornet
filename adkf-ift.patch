@@ -1,0 +1,2473 @@
+Molecular Prior Network evaluation scripts for FS-Mol / ADKF-IFT
+================================================================
+
+Apply to the ADKF-IFT repository (https://github.com/Wenlin-Chen/ADKF-IFT)
+at commit b82497e1382e4edd821d1c6132d080035b456884:
+
+    git clone https://github.com/Wenlin-Chen/ADKF-IFT.git
+    cd ADKF-IFT
+    git checkout b82497e1382e4edd821d1c6132d080035b456884
+    git apply /path/to/adkf-ift.patch
+
+The evaluation scripts additionally require the molpriornet package:
+
+    pip install git+https://github.com/daltontx/molpriornet.git
+
+Generated with:
+
+    git diff b82497e1382e4edd821d1c6132d080035b456884 HEAD -- . ':(exclude)uv.lock'
+
+The uv.lock file from our environment is omitted for readability; resolve
+dependencies from pyproject.toml instead.
+
+diff --git a/MoleculeNet/chem_lib/datasets/loader.py b/MoleculeNet/chem_lib/datasets/loader.py
+index 6000594..2c60617 100644
+--- a/MoleculeNet/chem_lib/datasets/loader.py
++++ b/MoleculeNet/chem_lib/datasets/loader.py
+@@ -122,7 +122,7 @@ class MoleculeDataset(InMemoryDataset):
+         self.transform, self.pre_transform, self.pre_filter = transform, pre_transform, pre_filter
+ 
+         if not empty:
+-            self.data, self.slices = torch.load(self.processed_paths[0])
++            self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
+             self.smiles_list = pd.read_csv(os.path.join(self.processed_dir,'smiles.csv'),
+             header=None).to_numpy()[:,0]
+ 
+diff --git a/MoleculeNet/chem_lib/models/adkf_trainer.py b/MoleculeNet/chem_lib/models/adkf_trainer.py
+index 0415af2..6a50663 100644
+--- a/MoleculeNet/chem_lib/models/adkf_trainer.py
++++ b/MoleculeNet/chem_lib/models/adkf_trainer.py
+@@ -33,7 +33,7 @@ from fs_mol.data import (
+ from fs_mol.data.dkt import get_dkt_batcher
+ from fs_mol.utils.torch_utils import torchify
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ class Meta_Trainer(nn.Module):
+     def __init__(self, args, model):
+@@ -382,7 +382,7 @@ class Meta_Trainer(nn.Module):
+             likelihood, model, mll = bo_utils.create_gp(x_train, y_train, "matern", self.args.device, 0.01, True)
+             model.train()
+             likelihood.train()
+-            fit_gpytorch_scipy(mll)
++            fit_gpytorch_mll_scipy(mll)
+             model.eval()
+             likelihood.eval()
+ 
+diff --git a/MoleculeNet/chem_lib/models/adkfift_trainer.py b/MoleculeNet/chem_lib/models/adkfift_trainer.py
+index 569692d..a9eba79 100644
+--- a/MoleculeNet/chem_lib/models/adkfift_trainer.py
++++ b/MoleculeNet/chem_lib/models/adkfift_trainer.py
+@@ -13,7 +13,7 @@ from .maml import MAML
+ from ..datasets import sample_meta_datasets, sample_test_datasets, MoleculeDataset
+ from ..utils import Logger
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from copy import deepcopy
+ 
+@@ -172,7 +172,7 @@ class ADKF_Meta_Trainer(nn.Module):
+                 self.model.train()
+                 _ = self.model(
+                     s_data=train_data['s_data'], q_data=None, s_label=train_data['s_label'], train_loss=True)
+-                fit_gpytorch_scipy(self.model.mll)
++                fit_gpytorch_mll_scipy(self.model.mll)
+ 
+                 # (outer) hypergrad computation
+                 self.model.train()
+@@ -238,7 +238,7 @@ class ADKF_Meta_Trainer(nn.Module):
+                     self.model.train()
+                     _ = self.model(
+                         s_data=cur_adapt_data['s_data'], q_data=None, s_label=cur_adapt_data['s_label'], train_loss=True)
+-                    fit_gpytorch_scipy(self.model.mll)
++                    fit_gpytorch_mll_scipy(self.model.mll)
+ 
+                     # (outer) hypergrad computation
+                     self.model.train()
+@@ -273,7 +273,7 @@ class ADKF_Meta_Trainer(nn.Module):
+             self.model.train()
+             _ = self.model(
+                 s_data=eval_data['s_data'], q_data=None, s_label=eval_data['s_label'], train_loss=True)
+-            fit_gpytorch_scipy(self.model.mll)
++            fit_gpytorch_mll_scipy(self.model.mll)
+ 
+             self.model.eval()
+             with torch.no_grad():
+diff --git a/MoleculeNet/chem_lib/models/encoder.py b/MoleculeNet/chem_lib/models/encoder.py
+index f0f5146..f8a017a 100644
+--- a/MoleculeNet/chem_lib/models/encoder.py
++++ b/MoleculeNet/chem_lib/models/encoder.py
+@@ -341,9 +341,9 @@ class GNN_Encoder(torch.nn.Module):
+ 
+     def from_pretrained(self, model_file, gpu_id):
+         if torch.cuda.is_available():
+-            self.gnn.load_state_dict(torch.load(model_file, map_location='cuda:' + str(gpu_id)))
++            self.gnn.load_state_dict(torch.load(model_file, map_location='cuda:' + str(gpu_id), weights_only=False))
+         else:
+-            self.gnn.load_state_dict(torch.load(model_file, map_location=torch.device('cpu')))
++            self.gnn.load_state_dict(torch.load(model_file, map_location=torch.device('cpu'), weights_only=False))
+ 
+     def forward(self, *argv):
+         if len(argv) == 4:
+diff --git a/MoleculeNet/data/sum.py b/MoleculeNet/data/sum.py
+index b9f9966..33f6c02 100644
+--- a/MoleculeNet/data/sum.py
++++ b/MoleculeNet/data/sum.py
+@@ -17,7 +17,7 @@ for i in range(len(files)):
+ 
+ del_list=[]
+ for file in files:
+-    data,slices=torch.load(file)
++    data,slices=torch.load(file, weights_only=False)
+     y=data.y
+     neg=int((y==0).sum())
+     pos = int((y == 1).sum())
+diff --git a/bayes_opt/bo_utils.py b/bayes_opt/bo_utils.py
+index 002aaf4..21a8def 100644
+--- a/bayes_opt/bo_utils.py
++++ b/bayes_opt/bo_utils.py
+@@ -41,7 +41,7 @@ import math
+ import torch
+ import gpytorch
+ import botorch
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from dpu_utils.utils import RichPath
+ 
+@@ -359,7 +359,7 @@ def run_gp_ei_bo(dataset, x_all, y_all, num_init_points, query_batch_size, num_b
+         likelihood, model, mll = create_gp(x_queried, y_queried, kernel_type, device, noise_init, noise_prior)
+         model.train()
+         likelihood.train()
+-        fit_gpytorch_scipy(mll)
++        fit_gpytorch_mll_scipy(mll)
+         model.eval()
+         likelihood.eval()
+         acq_func = botorch.acquisition.analytic.ExpectedImprovement(model, best_y_queried, maximize=False)
+@@ -503,7 +503,7 @@ class PARModelFeatureExtractor(PARModelTrainer):
+         device: torch.device = None,
+     ):
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         model = PARModelFeatureExtractor(config)
+@@ -550,7 +550,7 @@ class ADKTModelFeatureExtractor(ADKTModelTrainer):
+         device: torch.device = None,
+     ):
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         model = ADKTModelFeatureExtractor(config)
+@@ -597,7 +597,7 @@ class DKTModelFeatureExtractor(DKTModelTrainer):
+         device: torch.device = None,
+     ):
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         model = DKTModelFeatureExtractor(config)
+@@ -641,7 +641,7 @@ class PrototypicalNetworkFeatureExtractor(PrototypicalNetworkTrainer):
+         device: torch.device = None,
+     ) -> "PrototypicalNetworkTrainer":
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         model = PrototypicalNetworkFeatureExtractor(config)
+@@ -685,7 +685,7 @@ class CNPModelFeatureExtractor(CNPModelTrainer):
+         device: torch.device = None,
+     ):
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         model = CNPModelFeatureExtractor(config)
+diff --git a/bayes_opt/predictive_performance/adkt.py b/bayes_opt/predictive_performance/adkt.py
+index d8ece04..ca31ce7 100644
+--- a/bayes_opt/predictive_performance/adkt.py
++++ b/bayes_opt/predictive_performance/adkt.py
+@@ -7,7 +7,7 @@ from fs_mol.data.dkt import get_dkt_batcher
+ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.metrics import r2_score_os
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from bayes_opt.bo_utils import load_antibiotics_dataset, load_covid_moonshot_dataset, load_dockstring_dataset, load_cep_dataset, run_gp_ei_bo, min_so_far, task_to_batches, ADKTModelFeatureExtractor, create_gp
+ import numpy as np
+@@ -85,7 +85,7 @@ for i in range(200):
+     likelihood, model, mll = create_gp(x_train, y_train, "matern", device, 0.01, True)
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+     model.eval()
+     likelihood.eval()
+ 
+diff --git a/bayes_opt/predictive_performance/cnp.py b/bayes_opt/predictive_performance/cnp.py
+index ca24c70..ac012fe 100644
+--- a/bayes_opt/predictive_performance/cnp.py
++++ b/bayes_opt/predictive_performance/cnp.py
+@@ -7,7 +7,7 @@ from fs_mol.data.cnp import get_cnp_batcher
+ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.metrics import r2_score_os
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from bayes_opt.bo_utils import load_antibiotics_dataset, load_covid_moonshot_dataset, load_dockstring_dataset, load_cep_dataset, run_gp_ei_bo, min_so_far, task_to_batches, CNPModelFeatureExtractor, create_gp
+ import numpy as np
+@@ -84,7 +84,7 @@ for i in range(200):
+     likelihood, model, mll = create_gp(x_train, y_train, "matern", device, 0.01, True)
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+     model.eval()
+     likelihood.eval()
+ 
+diff --git a/bayes_opt/predictive_performance/dkt.py b/bayes_opt/predictive_performance/dkt.py
+index 8e71cc8..cf884c7 100644
+--- a/bayes_opt/predictive_performance/dkt.py
++++ b/bayes_opt/predictive_performance/dkt.py
+@@ -7,7 +7,7 @@ from fs_mol.data.dkt import get_dkt_batcher
+ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.metrics import r2_score_os
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from bayes_opt.bo_utils import load_antibiotics_dataset, load_covid_moonshot_dataset, load_dockstring_dataset, load_cep_dataset, run_gp_ei_bo, min_so_far, task_to_batches, DKTModelFeatureExtractor, create_gp
+ import numpy as np
+@@ -84,7 +84,7 @@ for i in range(200):
+     likelihood, model, mll = create_gp(x_train, y_train, "matern", device, 0.01, True)
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+     model.eval()
+     likelihood.eval()
+ 
+diff --git a/bayes_opt/predictive_performance/gnnmt.py b/bayes_opt/predictive_performance/gnnmt.py
+index e6a6196..d6c6d66 100644
+--- a/bayes_opt/predictive_performance/gnnmt.py
++++ b/bayes_opt/predictive_performance/gnnmt.py
+@@ -8,7 +8,7 @@ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.metrics import r2_score_os
+ from fs_mol.models.gnn_multitask import GNNMultitaskModel
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from bayes_opt.bo_utils import load_antibiotics_dataset, load_covid_moonshot_dataset, load_dockstring_dataset, load_cep_dataset, run_gp_ei_bo, min_so_far, task_to_batches, create_gp
+ import numpy as np
+@@ -85,7 +85,7 @@ for i in range(200):
+     likelihood, model, mll = create_gp(x_train, y_train, "matern", device, 0.01, True)
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+     model.eval()
+     likelihood.eval()
+ 
+diff --git a/bayes_opt/predictive_performance/gpst.py b/bayes_opt/predictive_performance/gpst.py
+index edc41c9..0db0d20 100644
+--- a/bayes_opt/predictive_performance/gpst.py
++++ b/bayes_opt/predictive_performance/gpst.py
+@@ -7,7 +7,7 @@ from fs_mol.data.dkt import get_dkt_batcher
+ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.metrics import r2_score_os
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from fs_mol.utils.chem_utils import get_binary_fingerprints
+ 
+@@ -64,7 +64,7 @@ for i in range(200):
+     likelihood, model, mll = create_gp(x_train, y_train, "tanimoto", device, 0.01, True)
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+     model.eval()
+     likelihood.eval()
+ 
+diff --git a/bayes_opt/predictive_performance/mat.py b/bayes_opt/predictive_performance/mat.py
+index aa0ef4c..ed4c7fe 100644
+--- a/bayes_opt/predictive_performance/mat.py
++++ b/bayes_opt/predictive_performance/mat.py
+@@ -10,7 +10,7 @@ from fs_mol.utils.metrics import r2_score_os
+ from fs_mol.models.mat import MATModel
+ from fs_mol.models.abstract_torch_fsmol_model import load_model_weights
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from bayes_opt.bo_utils import load_antibiotics_dataset, load_covid_moonshot_dataset, load_dockstring_dataset, load_cep_dataset, run_gp_ei_bo, min_so_far, task_to_batches, create_gp
+ import numpy as np
+@@ -97,7 +97,7 @@ for i in range(200):
+     likelihood, model, mll = create_gp(x_train, y_train, "matern", device, 0.01, True)
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+     model.eval()
+     likelihood.eval()
+ 
+diff --git a/bayes_opt/predictive_performance/par.py b/bayes_opt/predictive_performance/par.py
+index e881162..b9f158b 100644
+--- a/bayes_opt/predictive_performance/par.py
++++ b/bayes_opt/predictive_performance/par.py
+@@ -7,7 +7,7 @@ from fs_mol.data.dkt import get_dkt_batcher
+ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.metrics import r2_score_os
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from bayes_opt.bo_utils import load_antibiotics_dataset, load_covid_moonshot_dataset, load_dockstring_dataset, load_cep_dataset, run_gp_ei_bo, min_so_far, task_to_batches, PARModelFeatureExtractor, create_gp
+ import numpy as np
+@@ -83,7 +83,7 @@ for i in range(200):
+     likelihood, model, mll = create_gp(x_train, y_train, "matern", device, 0.01, True)
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+     model.eval()
+     likelihood.eval()
+ 
+diff --git a/bayes_opt/predictive_performance/protonet.py b/bayes_opt/predictive_performance/protonet.py
+index aff2578..0d7d1c5 100644
+--- a/bayes_opt/predictive_performance/protonet.py
++++ b/bayes_opt/predictive_performance/protonet.py
+@@ -7,7 +7,7 @@ from fs_mol.data.dkt import get_dkt_batcher
+ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.metrics import r2_score_os
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from bayes_opt.bo_utils import load_antibiotics_dataset, load_covid_moonshot_dataset, load_dockstring_dataset, load_cep_dataset, run_gp_ei_bo, min_so_far, task_to_batches, PrototypicalNetworkFeatureExtractor, create_gp
+ import numpy as np
+@@ -83,7 +83,7 @@ for i in range(200):
+     likelihood, model, mll = create_gp(x_train, y_train, "matern", device, 0.01, True)
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+     model.eval()
+     likelihood.eval()
+ 
+diff --git a/fs_mol/aggregate_results.py b/fs_mol/aggregate_results.py
+new file mode 100644
+index 0000000..53017ef
+--- /dev/null
++++ b/fs_mol/aggregate_results.py
+@@ -0,0 +1,163 @@
++#!/usr/bin/env python3
++"""Aggregate FS-Mol per-task evaluation CSVs into a summary table.
++
++Works for both numeric (regression) and binary (classification) outputs --
++everything after the 'seed' column is treated as a metric to aggregate.
++
++The reported uncertainty is the *seed-induced* standard deviation of the
++headline number: for each support size and metric, average across tasks
++within each seed (giving one value per seed), then take the std across seeds.
++This answers "how much would the headline change if we re-ran the whole
++pipeline with a fresh set of seeds?", which is the relevant noise floor when
++comparing models on a benchmark of intrinsically heterogeneous tasks (and
++where task-level variability is shared across all methods anyway -- see
++``pairwise_compare.py`` for proper paired model comparisons).
++
++The original FS-Mol-style cross-task std is still reported as a secondary
++column (``task_std``) for sanity-checking and continuity with prior work.
++
++To make the per-seed cross-task means comparable, only tasks that have
++results for *all* seeds at a given support size contribute to that row.
++
++Usage:
++    python fs_mol/aggregate_results.py outputs/FSMol_Eval_KernelMPN_2026-03-31_11-46-52/
++"""
++import argparse
++import glob
++import os
++import sys
++
++import numpy as np
++import pandas as pd
++
++
++def load_results(results_dir):
++    """Load and concatenate all per-task CSVs, tagging each with the task name."""
++    csv_paths = sorted(glob.glob(os.path.join(results_dir, "*_eval_results.csv")))
++    if not csv_paths:
++        print(f"No *_eval_results.csv files found in {results_dir}", file=sys.stderr)
++        sys.exit(1)
++
++    frames = []
++    for path in csv_paths:
++        task_name = os.path.basename(path).replace("_eval_results.csv", "")
++        df = pd.read_csv(path)
++        df.insert(0, "task", task_name)
++        frames.append(df)
++
++    return pd.concat(frames, ignore_index=True)
++
++
++def aggregate(df):
++    """Compute, per (num_train_requested, metric):
++
++      - mean: grand mean over the (task, seed) grid
++      - seed_std: std across seeds of (per-seed cross-task mean)
++                  -- captures seed-induced variability of the headline
++      - task_std: std across tasks of (per-task cross-seed mean)
++                  -- the original FS-Mol-style cross-task std (secondary)
++      - n_tasks, n_seeds: sample sizes backing each std
++
++    Only tasks with full seed coverage at the given support size contribute.
++    """
++    seed_col_idx = list(df.columns).index("seed")
++    metric_cols = list(df.columns[seed_col_idx + 1 :])
++
++    rows = []
++    for train_size, sub in df.groupby("num_train_requested", sort=True):
++        seeds_per_task = sub.groupby("task")["seed"].nunique()
++        max_seeds = int(seeds_per_task.max())
++        complete_tasks = seeds_per_task[seeds_per_task == max_seeds].index
++        dropped = sorted(set(seeds_per_task.index) - set(complete_tasks))
++        if dropped:
++            preview = ", ".join(dropped[:3]) + (", ..." if len(dropped) > 3 else "")
++            print(
++                f"  [warn] num_train_requested={int(train_size)}: dropping "
++                f"{len(dropped)} task(s) without full seed coverage "
++                f"({max_seeds} seeds expected): {preview}",
++                file=sys.stderr,
++            )
++
++        sub_complete = sub[sub["task"].isin(complete_tasks)]
++        n_tasks = int(sub_complete["task"].nunique())
++        n_seeds = int(sub_complete["seed"].nunique())
++
++        out = {
++            "num_train_requested": int(train_size),
++            "n_tasks": n_tasks,
++            "n_seeds": n_seeds,
++        }
++
++        for col in metric_cols:
++            # tasks x seeds matrix; .mean() collapses any duplicate (task, seed)
++            # rows defensively (shouldn't happen in normal eval runs).
++            cell = (
++                sub_complete.groupby(["task", "seed"])[col]
++                .mean()
++                .unstack("seed")
++            )
++            per_seed_mean = cell.mean(axis=0)  # one value per seed
++            per_task_mean = cell.mean(axis=1)  # one value per task
++
++            out[f"{col}_mean"] = per_seed_mean.mean()
++            out[f"{col}_seed_std"] = (
++                per_seed_mean.std(ddof=1) if n_seeds > 1 else np.nan
++            )
++            out[f"{col}_task_std"] = (
++                per_task_mean.std(ddof=1) if n_tasks > 1 else np.nan
++            )
++
++        rows.append(out)
++
++    return pd.DataFrame(rows), metric_cols
++
++
++def main():
++    parser = argparse.ArgumentParser(
++        description="Aggregate FS-Mol evaluation results across tasks and seeds.",
++        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
++    )
++    parser.add_argument(
++        "results_dir",
++        type=str,
++        help="Directory containing *_eval_results.csv files from an eval run.",
++    )
++    parser.add_argument(
++        "--out",
++        type=str,
++        default=None,
++        help="Path to write the summary CSV. If omitted, only prints to stdout.",
++    )
++    args = parser.parse_args()
++
++    df = load_results(args.results_dir)
++    formatted, metric_cols = aggregate(df)
++
++    print(f"\nResults from: {args.results_dir}")
++    print(f"Tasks: {df['task'].nunique()}, Metric columns: {metric_cols}\n")
++
++    for _, row in formatted.iterrows():
++        print(
++            f"  num_train = {int(row['num_train_requested']):>4d}  "
++            f"(n_tasks={int(row['n_tasks'])}, n_seeds={int(row['n_seeds'])})"
++        )
++        for col in metric_cols:
++            mean = row[f"{col}_mean"]
++            seed_std = row[f"{col}_seed_std"]
++            task_std = row[f"{col}_task_std"]
++            seed_str = f"{seed_std:.4f}" if pd.notna(seed_std) else "  n/a "
++            task_str = f"{task_std:.4f}" if pd.notna(task_std) else "  n/a "
++            print(
++                f"    {col:>30s}:  {mean:.4f}"
++                f"  ± {seed_str} (seed)"
++                f"   [± {task_str} (task)]"
++            )
++        print()
++
++    if args.out:
++        formatted.to_csv(args.out, index=False)
++        print(f"Summary written to {args.out}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/fs_mol/baseline_numeric_test.py b/fs_mol/baseline_numeric_test.py
+index b97cd40..c189cb2 100644
+--- a/fs_mol/baseline_numeric_test.py
++++ b/fs_mol/baseline_numeric_test.py
+@@ -71,7 +71,9 @@ def test(
+             grid_search_parameters = DEFAULT_GRID_SEARCH[model_name]
+             # in the case of kNNs the grid search has to be modified -- one cannot have
+             # more nearest neighbours than datapoints.
+-            grid_search = GridSearchCV(NAME_TO_MODEL_CLS[model_name](), grid_search_parameters)
++            grid_search = GridSearchCV(
++                NAME_TO_MODEL_CLS[model_name](), grid_search_parameters, n_jobs=-1
++            )
+         grid_search.fit(X_train, log_y_train_standardized)
+         model = grid_search.best_estimator_
+     else:
+diff --git a/fs_mol/data/fsmol_dataset.py b/fs_mol/data/fsmol_dataset.py
+index be33fcf..90dc48d 100644
+--- a/fs_mol/data/fsmol_dataset.py
++++ b/fs_mol/data/fsmol_dataset.py
+@@ -92,16 +92,19 @@ class FSMolDataset:
+ 
+         def get_fold_file_names(data_fold_name: str):
+             fold_dir = data_rp.join(data_fold_name)
++            all_file_names = fold_dir.get_filtered_files_in_dir("*.jsonl.gz")
+             if task_list is None:
+-                return fold_dir.get_filtered_files_in_dir("*.jsonl.gz")
++                return all_file_names
+             else:
++                # Membership test against a set: a linear scan per file makes loading
++                # large task lists (e.g. the 25k-assay split) quadratic in the pool size.
++                wanted_file_names = {
++                    f"{task_name}.jsonl.gz" for task_name in task_list[data_fold_name]
++                }
+                 return [
+                     file_name
+-                    for file_name in fold_dir.get_filtered_files_in_dir("*.jsonl.gz")
+-                    if any(
+-                        file_name.basename() == f"{task_name}.jsonl.gz"
+-                        for task_name in task_list[data_fold_name]
+-                    )
++                    for file_name in all_file_names
++                    if file_name.basename() in wanted_file_names
+                 ]
+ 
+         return FSMolDataset(
+diff --git a/fs_mol/gpst_test.py b/fs_mol/gpst_test.py
+index 3b15b7d..39da2c4 100644
+--- a/fs_mol/gpst_test.py
++++ b/fs_mol/gpst_test.py
+@@ -10,7 +10,7 @@ import gpytorch
+ from dpu_utils.utils import run_and_debug
+ from pyprojroot import here as project_root
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ sys.path.insert(0, str(project_root()))
+ 
+@@ -75,7 +75,7 @@ def test(
+     # fit model
+     model.train()
+     likelihood.train()
+-    fit_gpytorch_scipy(mll)
++    fit_gpytorch_mll_scipy(mll)
+ 
+     # Compute test results:
+     model.eval()
+diff --git a/fs_mol/models/adaptive_dkt.py b/fs_mol/models/adaptive_dkt.py
+index 7b8957b..8ec8990 100644
+--- a/fs_mol/models/adaptive_dkt.py
++++ b/fs_mol/models/adaptive_dkt.py
+@@ -1,4 +1,4 @@
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import List, Tuple
+ from typing_extensions import Literal
+ 
+@@ -26,7 +26,7 @@ PHYS_CHEM_DESCRIPTORS_DIM = 42
+ @dataclass(frozen=True)
+ class ADKTModelConfig:
+     # Model configuration:
+-    graph_feature_extractor_config: GraphFeatureExtractorConfig = GraphFeatureExtractorConfig()
++    graph_feature_extractor_config: GraphFeatureExtractorConfig = field(default_factory=GraphFeatureExtractorConfig)
+     used_features: Literal[
+         "gnn", "ecfp", "pc-descs", "gnn+ecfp", "ecfp+fc", "pc-descs+fc", "gnn+ecfp+pc-descs+fc"
+     ] = "gnn+ecfp+fc"
+diff --git a/fs_mol/models/adaptive_dkt_vgp.py b/fs_mol/models/adaptive_dkt_vgp.py
+index c171975..a7d3849 100644
+--- a/fs_mol/models/adaptive_dkt_vgp.py
++++ b/fs_mol/models/adaptive_dkt_vgp.py
+@@ -1,4 +1,4 @@
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import List, Tuple
+ from typing_extensions import Literal
+ 
+@@ -16,7 +16,7 @@ from fs_mol.utils.gp_utils import VariationalGPLayer, ExactGPLayer
+ import gpytorch
+ from gpytorch.distributions import MultivariateNormal
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ #from fs_mol.utils._stateless import functional_call
+ 
+@@ -27,7 +27,7 @@ PHYS_CHEM_DESCRIPTORS_DIM = 42
+ @dataclass(frozen=True)
+ class ADKTVGPModelConfig:
+     # Model configuration:
+-    graph_feature_extractor_config: GraphFeatureExtractorConfig = GraphFeatureExtractorConfig()
++    graph_feature_extractor_config: GraphFeatureExtractorConfig = field(default_factory=GraphFeatureExtractorConfig)
+     used_features: Literal[
+         "gnn", "ecfp", "pc-descs", "gnn+ecfp", "ecfp+fc", "pc-descs+fc", "gnn+ecfp+pc-descs+fc"
+     ] = "gnn+ecfp+fc"
+@@ -104,7 +104,7 @@ class ADKTVGPModel(nn.Module):
+             exact_gp_model.covar_module.base_kernel.lengthscale = torch.ones_like(exact_gp_model.covar_module.base_kernel.lengthscale) * median_lengthscale_init
+         
+         exact_gp_model.set_train_data(inputs=train_x.detach(), targets=train_y_regression.detach(), strict=False)
+-        fit_gpytorch_scipy(exact_mll)
++        fit_gpytorch_mll_scipy(exact_mll)
+ 
+         self.__create_tail_GP(train_x=train_x, train_y=train_y, kernel_type=self.config.gp_kernel)
+ 
+@@ -200,7 +200,7 @@ class ADKTVGPModel(nn.Module):
+                     self.reinit_gp_params(support_features_flat.detach(), support_labels_converted.detach(), self.config.use_lengthscale_prior)
+                     self.gp_model.set_train_data(inputs=support_features_flat.detach(), targets=support_labels_converted.detach(), strict=False)
+                     with torch.no_grad():
+-                        logits = self.gp_model(support_features_flat.detach()) # I don't know why, but this is a necessary step before calling fit_gpytorch_scipy when using VariationalELBO
++                        logits = self.gp_model(support_features_flat.detach()) # I don't know why, but this is a necessary step before calling fit_gpytorch_mll_scipy when using VariationalELBO
+             else: # compute val loss (on the query set)
+                 assert is_functional_call == True
+                 assert predictive_val_loss == True
+diff --git a/fs_mol/models/cnp.py b/fs_mol/models/cnp.py
+index 8681f91..eb73f7d 100644
+--- a/fs_mol/models/cnp.py
++++ b/fs_mol/models/cnp.py
+@@ -1,4 +1,4 @@
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import List, Tuple
+ from typing_extensions import Literal
+ 
+@@ -18,7 +18,7 @@ PHYS_CHEM_DESCRIPTORS_DIM = 42
+ @dataclass(frozen=True)
+ class CNPModelConfig:
+     # Model configuration:
+-    graph_feature_extractor_config: GraphFeatureExtractorConfig = GraphFeatureExtractorConfig()
++    graph_feature_extractor_config: GraphFeatureExtractorConfig = field(default_factory=GraphFeatureExtractorConfig)
+     used_features: Literal[
+         "gnn", "ecfp", "pc-descs", "gnn+ecfp", "ecfp+fc", "pc-descs+fc", "gnn+ecfp+pc-descs+fc"
+     ] = "gnn+ecfp+fc"
+diff --git a/fs_mol/models/dkl.py b/fs_mol/models/dkl.py
+index 33b933b..0d30448 100644
+--- a/fs_mol/models/dkl.py
++++ b/fs_mol/models/dkl.py
+@@ -1,4 +1,4 @@
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import List, Tuple
+ from typing_extensions import Literal
+ 
+@@ -15,7 +15,7 @@ from fs_mol.utils.gp_utils import ExactGPLayer
+ 
+ import gpytorch
+ from gpytorch.distributions import MultivariateNormal
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from copy import deepcopy
+ 
+@@ -27,7 +27,7 @@ PHYS_CHEM_DESCRIPTORS_DIM = 42
+ @dataclass(frozen=True)
+ class DKLModelConfig:
+     # Model configuration:
+-    graph_feature_extractor_config: GraphFeatureExtractorConfig = GraphFeatureExtractorConfig()
++    graph_feature_extractor_config: GraphFeatureExtractorConfig = field(default_factory=GraphFeatureExtractorConfig)
+     used_features: Literal[
+         "gnn", "ecfp", "pc-descs", "gnn+ecfp", "ecfp+fc", "pc-descs+fc", "gnn+ecfp+pc-descs+fc"
+     ] = "gnn+ecfp+fc"
+diff --git a/fs_mol/models/dkt.py b/fs_mol/models/dkt.py
+index 8f4dac9..617a170 100644
+--- a/fs_mol/models/dkt.py
++++ b/fs_mol/models/dkt.py
+@@ -1,4 +1,4 @@
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import List, Tuple
+ from typing_extensions import Literal
+ 
+@@ -15,7 +15,7 @@ from fs_mol.utils.gp_utils import ExactGPLayer
+ 
+ import gpytorch
+ from gpytorch.distributions import MultivariateNormal
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from copy import deepcopy
+ 
+@@ -27,7 +27,7 @@ PHYS_CHEM_DESCRIPTORS_DIM = 42
+ @dataclass(frozen=True)
+ class DKTModelConfig:
+     # Model configuration:
+-    graph_feature_extractor_config: GraphFeatureExtractorConfig = GraphFeatureExtractorConfig()
++    graph_feature_extractor_config: GraphFeatureExtractorConfig = field(default_factory=GraphFeatureExtractorConfig)
+     used_features: Literal[
+         "gnn", "ecfp", "pc-descs", "gnn+ecfp", "ecfp+fc", "pc-descs+fc", "gnn+ecfp+pc-descs+fc"
+     ] = "gnn+ecfp+fc"
+@@ -158,7 +158,7 @@ class DKTModel(nn.Module):
+             
+             if self.test_time_adaptation:
+                 self.gp_likelihood.train()
+-                fit_gpytorch_scipy(self.mll)
++                fit_gpytorch_mll_scipy(self.mll)
+             
+             self.gp_model.eval()
+             self.gp_likelihood.eval()
+diff --git a/fs_mol/models/par.py b/fs_mol/models/par.py
+index 33dfbf0..4781e43 100644
+--- a/fs_mol/models/par.py
++++ b/fs_mol/models/par.py
+@@ -1,4 +1,4 @@
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import List, Tuple
+ from typing_extensions import Literal
+ 
+@@ -27,7 +27,7 @@ PHYS_CHEM_DESCRIPTORS_DIM = 42
+ @dataclass(frozen=True)
+ class PARModelConfig:
+     # Model configuration:
+-    graph_feature_extractor_config: GraphFeatureExtractorConfig = GraphFeatureExtractorConfig()
++    graph_feature_extractor_config: GraphFeatureExtractorConfig = field(default_factory=GraphFeatureExtractorConfig)
+     used_features: Literal[
+         "gnn", "ecfp", "pc-descs", "gnn+ecfp", "ecfp+fc", "pc-descs+fc", "gnn+ecfp+pc-descs+fc"
+     ] = "gnn+ecfp+fc"
+diff --git a/fs_mol/models/protonet.py b/fs_mol/models/protonet.py
+index e72f2de..490b478 100644
+--- a/fs_mol/models/protonet.py
++++ b/fs_mol/models/protonet.py
+@@ -1,4 +1,4 @@
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import List, Tuple
+ from typing_extensions import Literal
+ 
+@@ -19,7 +19,7 @@ PHYS_CHEM_DESCRIPTORS_DIM = 42
+ @dataclass(frozen=True)
+ class PrototypicalNetworkConfig:
+     # Model configuration:
+-    graph_feature_extractor_config: GraphFeatureExtractorConfig = GraphFeatureExtractorConfig()
++    graph_feature_extractor_config: GraphFeatureExtractorConfig = field(default_factory=GraphFeatureExtractorConfig)
+     used_features: Literal[
+         "gnn", "ecfp", "pc-descs", "gnn+ecfp", "ecfp+fc", "pc-descs+fc", "gnn+ecfp+pc-descs+fc"
+     ] = "gnn+ecfp+fc"
+diff --git a/fs_mol/modules/graph_feature_extractor.py b/fs_mol/modules/graph_feature_extractor.py
+index d3f1d40..2e0ff3c 100644
+--- a/fs_mol/modules/graph_feature_extractor.py
++++ b/fs_mol/modules/graph_feature_extractor.py
+@@ -1,5 +1,5 @@
+ import argparse
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from typing import Optional
+ from typing_extensions import Literal
+ 
+@@ -20,8 +20,8 @@ from fs_mol.modules.graph_readout import (
+ @dataclass(frozen=True)
+ class GraphFeatureExtractorConfig:
+     initial_node_feature_dim: int = NUM_NODE_FEATURES
+-    gnn_config: GNNConfig = GNNConfig()
+-    readout_config: GraphReadoutConfig = GraphReadoutConfig()
++    gnn_config: GNNConfig = field(default_factory=GNNConfig)
++    readout_config: GraphReadoutConfig = field(default_factory=GraphReadoutConfig)
+     output_norm: Literal["off", "layer", "batch"] = "off"
+ 
+ 
+diff --git a/fs_mol/mpn_test.py b/fs_mol/mpn_test.py
+new file mode 100644
+index 0000000..4855991
+--- /dev/null
++++ b/fs_mol/mpn_test.py
+@@ -0,0 +1,136 @@
++#!/usr/bin/env python3
++"""Evaluate Molecular Prior Network models on FS-Mol tasks.
++
++Requires the ``molpriornet`` package alongside the FS-Mol dependencies:
++
++    pip install git+https://github.com/daltontx/molpriornet.git
++"""
++import argparse
++import logging
++import sys
++
++import numpy as np
++import torch
++from dpu_utils.utils import run_and_debug
++from pyprojroot import here as project_root
++
++sys.path.insert(0, str(project_root()))
++
++from molpriornet.model import AttMPN
++from molpriornet.utils import MODEL_CLASSES, get_fingerprint_size
++
++from fs_mol.data.fsmol_task import FSMolTaskSample
++from fs_mol.utils.chem_utils import compute_fingerprints
++from fs_mol.utils.metrics import NumericEvalMetrics, compute_numeric_task_metrics
++from fs_mol.utils.test_utils import (
++    eval_model,
++    add_eval_cli_args,
++    set_up_test_run,
++)
++
++logger = logging.getLogger(__name__)
++
++
++def test(model, task_sample, fp_size):
++    train_data = task_sample.train_samples
++    test_data = task_sample.test_samples
++
++    X_train = compute_fingerprints([x.smiles for x in train_data], fp_size)
++    X_test = compute_fingerprints([x.smiles for x in test_data], fp_size)
++
++    y_train = np.array([float(x.numeric_label) for x in train_data])
++    y_test = np.array([float(x.numeric_label) for x in test_data])
++
++    logger.info(f" Evaluating {type(model).__name__} with {X_train.shape[0]} training samples.")
++
++    # Convert to pIC50 space: -log10(value_nM * 1e-9) = 9 - log10(value_nM)
++    # This is what MPN models were trained on (FSMolLoader.TargetType.LOG_REGRESSION_PROPERTY).
++    pic50_train = -np.log10(y_train * 1e-9)
++
++    # Fit/predict in pIC50 space, matching run_mpn.py conventions
++    with torch.no_grad():
++        if isinstance(model, AttMPN):
++            pic50_mean = pic50_train.mean()
++            pic50_std = pic50_train.std()
++            model.fit(X_train, (pic50_train - pic50_mean) / pic50_std)
++            preds_pic50 = model.predict(X_test) * pic50_std + pic50_mean
++        else:
++            model.fit(X_train, pic50_train)
++            preds_pic50 = model.predict(X_test)
++
++    # Convert predictions back to ADKF's ln(nM) convention for metric computation.
++    # pIC50 = 9 - log10(val_nM)  =>  ln(val_nM) = (9 - pIC50) * ln(10)
++    preds_ln = (9.0 - preds_pic50) * np.log(10)
++
++    # Standardize in ln space (matching ADKF / baseline_numeric_test protocol)
++    log_y_train = np.log(y_train)
++    log_y_test = np.log(y_test)
++    standardize_mean = log_y_train.mean()
++    standardize_std = log_y_train.std()
++
++    preds_standardized = (preds_ln - standardize_mean) / standardize_std
++    log_y_test_standardized = (log_y_test - standardize_mean) / standardize_std
++
++    test_metrics = compute_numeric_task_metrics(preds_standardized, log_y_test_standardized)
++    logger.info(f" Test metrics: {test_metrics}")
++
++    return test_metrics
++
++
++def run_from_args(args):
++    out_dir, dataset = set_up_test_run(args.model, args, torch=True)
++
++    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
++    logger.info(f"Device: {device}")
++
++    model = MODEL_CLASSES[args.model].load_model(args.TRAINED_MODEL)
++    model.eval()
++    fp_size = get_fingerprint_size(model)
++    logger.info(f"Loaded {args.model} from {args.TRAINED_MODEL} (fingerprint size: {fp_size})")
++
++    def test_model_fn(
++        task_sample: FSMolTaskSample, temp_out_folder: str, seed: int
++    ) -> NumericEvalMetrics:
++        return test(model=model, task_sample=task_sample, fp_size=fp_size)
++
++    eval_model(
++        test_model_fn=test_model_fn,
++        dataset=dataset,
++        train_set_sample_sizes=args.train_sizes,
++        out_dir=out_dir,
++        num_samples=args.num_runs,
++        test_size_or_ratio=args.test_size,
++        seed=args.seed,
++        filter_numeric_labels=True,
++    )
++
++
++def run():
++    parser = argparse.ArgumentParser(
++        description="Evaluate MPN models (AttMPN / KernelMPN) on FS-Mol tasks.",
++        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
++    )
++
++    parser.add_argument(
++        "TRAINED_MODEL",
++        type=str,
++        help="Path to the pretrained model checkpoint (.pth file).",
++    )
++
++    add_eval_cli_args(parser)
++
++    parser.add_argument(
++        "--model",
++        type=str,
++        default="KernelMPN",
++        choices=list(MODEL_CLASSES),
++        help="Which MPN model architecture to evaluate.",
++    )
++    parser.add_argument("--debug", dest="debug", action="store_true", help="Enable debug routines")
++
++    args = parser.parse_args()
++    run_and_debug(lambda: run_from_args(args), args.debug)
++
++
++if __name__ == "__main__":
++    run()
+diff --git a/fs_mol/runtime_comparison.py b/fs_mol/runtime_comparison.py
+new file mode 100644
+index 0000000..3c3f52b
+--- /dev/null
++++ b/fs_mol/runtime_comparison.py
+@@ -0,0 +1,776 @@
++#!/usr/bin/env python3
++"""Compare wall-clock fit+predict time of ADKF-IFT, both MPN models
++(AttMPN and KernelMPN) and a Random-Forest baseline (with grid search,
++matching ``baseline_numeric_test.py``) on a single FS-Mol task, as a function
++of support-set size.
++
++Protocol
++--------
++1. Load one task from a ``.jsonl.gz`` file.
++2. Filter out tasks whose numeric labels don't match the pIC50-style
++   regression convention used by both ADKF and the MPN pipeline.
++3. Reserve a fraction of the samples as a fixed query (test) set; the rest form
++   the support pool.
++4. Pre-compute MPN Morgan fingerprints for every sample **once** per MPN model
++   (outside the timed region) so that the cost of featurisation is not charged
++   to the MPN fit+predict time. ADKF reuses the fingerprints / descriptors
++   already cached in the ``.jsonl.gz`` file. Random-Forest reuses the cached
++   ECFP fingerprint exposed by ``MoleculeDatapoint.get_fingerprint()`` (also
++   precomputed outside the timed region).
++5. Loop over support sizes ``step, 2*step, ...``. For each size, time just the
++   fit+predict portion of each model. Also record R2 on the query set as a
++   sanity check.
++
++Example
++-------
++    python fs_mol/runtime_comparison.py \
++        ../../data/fs-mol/test/CHEMBL1909140.jsonl.gz \
++        outputs/adkf_ift.pt \
++        --kernel-mpn-checkpoint outputs/kernel_mpn.pth \
++        --att-mpn-checkpoint outputs/att_mpn.pth \
++        --step 10 \
++        --query-fraction 0.3 \
++        --out runtime_comparison.csv
++"""
++from __future__ import annotations
++
++import argparse
++import csv
++import gc
++import logging
++import random
++import sys
++import time
++from functools import partial
++from typing import Any, Dict, List, Optional, Tuple
++
++import numpy as np
++import torch
++from dpu_utils.utils import RichPath
++from pyprojroot import here as project_root
++from rdkit import Chem
++from rdkit.Chem import rdFingerprintGenerator
++from sklearn.ensemble import RandomForestRegressor
++from sklearn.model_selection import GridSearchCV
++
++sys.path.insert(0, str(project_root()))
++
++from molpriornet.model import AttMPN, KernelMPN
++
++from fs_mol.data.dkt import (
++    get_dkt_batcher,
++    task_sample_to_dkt_task_sample,
++)
++from fs_mol.data.fsmol_task import FSMolTask, FSMolTaskSample, MoleculeDatapoint
++from fs_mol.models.adaptive_dkt import ADKTModel
++from fs_mol.utils.adaptive_dkt_utils import ADKTModelTrainer, run_on_batches
++from fs_mol.utils.metrics import compute_numeric_task_metrics
++from fs_mol.utils.torch_utils import torchify
++
++
++logger = logging.getLogger(__name__)
++
++# The MPN classes the script knows how to load. The keys double as short labels
++# used in CSV columns and log lines.
++MPN_MODEL_CLASSES: Dict[str, Any] = {
++    "kernel_mpn": KernelMPN,
++    "att_mpn": AttMPN,
++}
++
++# Random-Forest hyperparameter grid, lifted verbatim from
++# ``baseline_numeric_test.py`` so the timing reflects the same protocol.
++RF_GRID_SEARCH: Dict[str, List[Any]] = {
++    "n_estimators": [100, 200],
++    "max_depth": [5, 10, 20],
++    "max_features": [None, "sqrt", "log2"],
++    "min_samples_leaf": [2, 5],
++}
++
++
++# ---------------------------------------------------------------------------
++# Data helpers
++# ---------------------------------------------------------------------------
++
++def load_task(jsonl_path: str) -> FSMolTask:
++    """Load an FS-Mol task from a ``.jsonl.gz`` file."""
++    return FSMolTask.load_from_file(RichPath.create(jsonl_path))
++
++
++def task_has_valid_numeric_labels(task: FSMolTask) -> bool:
++    """Mirror the filter used in the DKT / MPN evaluation pipelines."""
++    labels = np.array([s.numeric_label for s in task.samples])
++    all_percentages = np.all(labels >= 0.0) and np.all(labels <= 100.0)
++    non_positive = np.any(labels <= 0.0)
++    has_inf = np.any(np.isinf(labels))
++    has_nan = np.any(np.isnan(labels))
++    return not (all_percentages or non_positive or has_inf or has_nan)
++
++
++def split_support_query(
++    task: FSMolTask,
++    query_fraction: float,
++    seed: int,
++    max_query_size: Optional[int] = None,
++) -> Tuple[List[MoleculeDatapoint], List[MoleculeDatapoint]]:
++    """Shuffle samples and split into (support_pool, query_set).
++
++    ``query_fraction`` is the default rule, but if ``max_query_size`` is given
++    the query set is capped at that size — useful when you want to hold the
++    query set to a fixed count (e.g. 100) while the support pool grows into
++    the thousands.
++    """
++    rng = random.Random(seed)
++    samples = list(task.samples)
++    rng.shuffle(samples)
++
++    n_query = max(2, int(round(query_fraction * len(samples))))
++    if max_query_size is not None:
++        n_query = min(n_query, max_query_size)
++    if n_query >= len(samples):
++        raise ValueError(
++            f"Query size {n_query} leaves no samples for the support pool"
++            f" (task has {len(samples)} samples)."
++        )
++    query = samples[:n_query]
++    support_pool = samples[n_query:]
++    return support_pool, query
++
++
++# ---------------------------------------------------------------------------
++# MPN helpers
++# ---------------------------------------------------------------------------
++
++def get_mpn_fingerprint_size(model) -> int:
++    if isinstance(model, AttMPN):
++        return model.n_features
++    if isinstance(model, KernelMPN):
++        return model.proj.weight.shape[1]
++    raise ValueError(f"Unknown MPN model type: {type(model)}")
++
++
++def compute_mpn_fingerprints(smiles_list: List[str], fp_size: int) -> np.ndarray:
++    """Morgan (radius=2) bit fingerprints, matching the MPN training pipeline."""
++    generator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=fp_size)
++    fps = []
++    for smi in smiles_list:
++        mol = Chem.MolFromSmiles(smi)
++        if mol is None:
++            mol = Chem.MolFromSmiles(smi, sanitize=False)
++            mol.UpdatePropertyCache(strict=False)
++            Chem.FastFindRings(mol)
++        fps.append(np.array(generator.GetFingerprint(mol)))
++    return np.array(fps, dtype=np.float32)
++
++
++def mpn_fit_predict(
++    model,
++    X_train: torch.Tensor,
++    X_test: torch.Tensor,
++    y_train_pic50: torch.Tensor,
++) -> np.ndarray:
++    """Match the pIC50-space fit/predict convention from ``mpn_test.py``.
++
++    ``X_train`` / ``X_test`` / ``y_train_pic50`` must already live on the same
++    device as ``model``; we call ``model.forward`` directly to avoid the
++    CPU-only ``fit`` / ``predict`` helpers in the ``molpriornet`` package.
++    Returns predictions in pIC50 space as a NumPy array on CPU.
++    """
++    with torch.no_grad():
++        if isinstance(model, AttMPN):
++            # ``unbiased=False`` matches numpy's default ``ddof=0`` so the
++            # standardisation is bit-for-bit equivalent to the original numpy
++            # implementation.
++            mean = y_train_pic50.mean()
++            std = y_train_pic50.std(unbiased=False)
++            y_t = ((y_train_pic50 - mean) / std).unsqueeze(-1)
++            out = model(X_train, y_t, X_test).squeeze(-1)
++            preds = (out * std + mean).detach().cpu().numpy()
++        else:
++            out = model(X_train, y_train_pic50, X_test)
++            preds = out.detach().cpu().numpy()
++    return preds
++
++
++def mpn_predictions_to_standardized_log(
++    preds_pic50: np.ndarray,
++    y_train_nM: np.ndarray,
++) -> np.ndarray:
++    """Convert pIC50 predictions to the ADKF-style standardized log-nM space
++    so that metrics can be compared head-to-head."""
++    preds_ln = (9.0 - preds_pic50) * np.log(10)
++    log_y_train = np.log(y_train_nM)
++    mean = log_y_train.mean()
++    std = log_y_train.std()
++    return (preds_ln - mean) / std
++
++
++# ---------------------------------------------------------------------------
++# Random-Forest helpers
++# ---------------------------------------------------------------------------
++
++def rf_fit_predict(
++    X_train: np.ndarray,
++    X_test: np.ndarray,
++    y_train_std: np.ndarray,
++    grid: Dict[str, List[Any]],
++    cv: int = 5,
++    n_jobs: int = -1,
++) -> np.ndarray:
++    """Match the grid-search protocol used in ``baseline_numeric_test.py``.
++
++    ``y_train_std`` should already be in standardized log-nM space (computed
++    with the support-set's own log-mean/std), so the predictions returned here
++    can be compared directly against the equivalently standardized query
++    labels.
++    """
++    grid_search = GridSearchCV(RandomForestRegressor(), grid, n_jobs=n_jobs, cv=cv)
++    grid_search.fit(X_train, y_train_std)
++    return grid_search.best_estimator_.predict(X_test)
++
++
++# ---------------------------------------------------------------------------
++# ADKF helpers
++# ---------------------------------------------------------------------------
++
++def build_adkf_batch(
++    support_samples: List[MoleculeDatapoint],
++    query_samples: List[MoleculeDatapoint],
++    task_name: str,
++    model: ADKTModel,
++    use_numeric_labels: bool,
++    max_batch_size: int,
++):
++    """Turn a (support, query) pair into a torchified DKT batch on the model's
++    device. Runs outside the timed region."""
++    batcher = get_dkt_batcher(max_num_graphs=max_batch_size)
++    task_sample = FSMolTaskSample(
++        name=task_name,
++        train_samples=support_samples,
++        valid_samples=[],
++        test_samples=query_samples,
++    )
++    dkt_task_sample = task_sample_to_dkt_task_sample(
++        task_sample, batcher, filter_numeric_labels=use_numeric_labels
++    )
++    return torchify(dkt_task_sample, device=model.device)
++
++
++def adkf_fit_predict(model: ADKTModel, dkt_task_sample) -> float:
++    """Run ADKF's fit+predict on a single task sample. Returns test R2 as a
++    sanity-check."""
++    metrics = run_on_batches(
++        model,
++        batches=dkt_task_sample.batches,
++        batch_labels=dkt_task_sample.batch_labels,
++        batch_numeric_labels=dkt_task_sample.batch_numeric_labels,
++        train=False,
++    )
++    return metrics.r2
++
++
++# ---------------------------------------------------------------------------
++# Timing utilities
++# ---------------------------------------------------------------------------
++
++def _sync(device: torch.device) -> None:
++    if device.type == "cuda":
++        torch.cuda.synchronize(device)
++
++
++def _time_callable(
++    fn,
++    device: torch.device,
++    repeats: int,
++    warmup: int = 1,
++):
++    """Run ``fn`` ``repeats`` times after ``warmup`` discarded warm-up calls.
++
++    Returns ``(mean_s, median_s, std_s, last_return)``. The median is reported
++    alongside the mean because with only a handful of repeats a single slow
++    call (GC pause, scheduler hiccup) drags the mean well away from the typical
++    runtime. ``warmup=0`` is appropriate for expensive callables (e.g. RF grid
++    search) where there is no kernel JIT or allocator state worth amortising.
++    """
++    for _ in range(warmup):
++        fn()
++        _sync(device)
++
++    timings = []
++    last_ret = None
++    for _ in range(repeats):
++        _sync(device)
++        t0 = time.perf_counter()
++        last_ret = fn()
++        _sync(device)
++        timings.append(time.perf_counter() - t0)
++    arr = np.array(timings)
++    return float(arr.mean()), float(np.median(arr)), float(arr.std()), last_ret
++
++
++# ---------------------------------------------------------------------------
++# Main loop
++# ---------------------------------------------------------------------------
++
++def run_comparison(args):
++    logging.basicConfig(
++        level=logging.INFO,
++        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
++    )
++
++    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
++    logger.info("Device: %s", device)
++
++    # ----- Load task -----
++    task = load_task(args.data_path)
++    logger.info("Loaded task %s with %d samples.", task.name, len(task.samples))
++
++    if not task_has_valid_numeric_labels(task):
++        raise ValueError(
++            f"Task {task.name} has labels incompatible with the pIC50 regression"
++            " convention used by ADKF / MPN."
++        )
++
++    support_pool, query_samples = split_support_query(
++        task,
++        args.query_fraction,
++        args.seed,
++        max_query_size=args.max_query_size,
++    )
++    logger.info(
++        "Reserved %d samples as the fixed query set; %d available as support pool.",
++        len(query_samples),
++        len(support_pool),
++    )
++
++    # Determine support-size schedule
++    if args.support_size_schedule is not None:
++        requested = sorted(set(int(n) for n in args.support_size_schedule))
++        support_sizes = [n for n in requested if 1 <= n <= len(support_pool)]
++        dropped = [n for n in requested if n not in support_sizes]
++        if dropped:
++            logger.warning(
++                "Dropping schedule entries that exceed the support pool"
++                " (%d samples): %s",
++                len(support_pool),
++                dropped,
++            )
++        if not support_sizes:
++            raise ValueError(
++                "No valid support sizes in --support-size-schedule;"
++                f" pool size is {len(support_pool)}."
++            )
++        logger.info("Sweeping support sizes (explicit): %s", support_sizes)
++    else:
++        max_support_size = args.max_support_size or len(support_pool)
++        max_support_size = min(max_support_size, len(support_pool))
++        support_sizes = list(range(args.step, max_support_size + 1, args.step))
++        if not support_sizes:
++            raise ValueError(
++                "No valid support sizes. Increase support pool or reduce --step."
++            )
++        logger.info(
++            "Sweeping support sizes %s (step=%d).",
++            f"{support_sizes[0]}..{support_sizes[-1]}",
++            args.step,
++        )
++
++    # ----- Load MPN models + precompute fingerprints (once per model) -----
++    mpn_checkpoints: Dict[str, str] = {}
++    if args.kernel_mpn_checkpoint:
++        mpn_checkpoints["kernel_mpn"] = args.kernel_mpn_checkpoint
++    if args.att_mpn_checkpoint:
++        mpn_checkpoints["att_mpn"] = args.att_mpn_checkpoint
++
++    mpn_models: Dict[str, torch.nn.Module] = {}
++    # Each MPN model can have a different fingerprint size, so we cache one
++    # (support_pool_fps_t, query_fps_t) pair per model.
++    mpn_fp_cache: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
++
++    for name, ckpt in mpn_checkpoints.items():
++        cls = MPN_MODEL_CLASSES[name]
++        model = cls.load_model(ckpt).to(device)
++        model.eval()
++        fp_size = get_mpn_fingerprint_size(model)
++        logger.info(
++            "Loaded MPN %s from %s (fingerprint size: %d).",
++            name,
++            ckpt,
++            fp_size,
++        )
++
++        logger.info(
++            "Pre-computing MPN fingerprints for %s (excluded from timing)...",
++            name,
++        )
++        fp_t0 = time.perf_counter()
++        support_pool_fps = compute_mpn_fingerprints(
++            [s.smiles for s in support_pool], fp_size
++        )
++        query_fps = compute_mpn_fingerprints(
++            [s.smiles for s in query_samples], fp_size
++        )
++        logger.info(
++            "Pre-computed %d support + %d query fingerprints for %s in %.2fs.",
++            support_pool_fps.shape[0],
++            query_fps.shape[0],
++            name,
++            time.perf_counter() - fp_t0,
++        )
++
++        # Move fingerprints to device once, outside the timed region.
++        mpn_models[name] = model
++        mpn_fp_cache[name] = (
++            torch.as_tensor(support_pool_fps, device=device),
++            torch.as_tensor(query_fps, device=device),
++        )
++
++    y_support_pool_nM = np.array([float(s.numeric_label) for s in support_pool])
++    y_query_nM = np.array([float(s.numeric_label) for s in query_samples])
++
++    # Pre-compute the pIC50-space support labels on device once, so the
++    # per-call MPN timing does not include host -> device label uploads or the
++    # log10 transform (parity with ADKF, whose labels are torchified outside
++    # the timed region inside ``build_adkf_batch``).
++    y_support_pool_pic50_t = torch.as_tensor(
++        -np.log10(y_support_pool_nM * 1e-9), dtype=torch.float32, device=device
++    )
++
++    # ----- Random-Forest features (once) -----
++    rf_support_pool_X: Optional[np.ndarray] = None
++    rf_query_X: Optional[np.ndarray] = None
++    if args.rf:
++        logger.info(
++            "Pre-extracting cached ECFP fingerprints for Random Forest"
++            " (excluded from timing)..."
++        )
++        rf_t0 = time.perf_counter()
++        rf_support_pool_X = np.array([s.get_fingerprint() for s in support_pool])
++        rf_query_X = np.array([s.get_fingerprint() for s in query_samples])
++        logger.info(
++            "Extracted RF features: support %s, query %s in %.2fs.",
++            rf_support_pool_X.shape,
++            rf_query_X.shape,
++            time.perf_counter() - rf_t0,
++        )
++
++    # ----- Load ADKF model -----
++    logger.info("Loading ADKF-IFT model from %s ...", args.adkf_checkpoint)
++    adkf_model = ADKTModelTrainer.build_from_model_file(
++        args.adkf_checkpoint, device=device
++    ).to(device)
++    adkf_model.eval()
++    use_numeric = adkf_model.config.use_numeric_labels
++    logger.info(
++        "ADKF model loaded (use_numeric_labels=%s).", use_numeric
++    )
++
++    # Reference standardisation (ADKF-style) for computing MPN/RF R2 in
++    # matching space.
++    log_y_query = np.log(y_query_nM)
++
++    # ----- Sweep -----
++    results: List[Dict[str, Any]] = []
++    for n in support_sizes:
++        support_samples = support_pool[:n]
++        y_support_nM = y_support_pool_nM[:n]
++        y_support_pic50_t = y_support_pool_pic50_t[:n]
++
++        # Per-n standardisation in log-nM space (same convention as
++        # baseline_numeric_test / mpn_test): use support-set stats to map both
++        # support labels and query labels to a shared standardized space.
++        log_y_support = np.log(y_support_nM)
++        std_mean = log_y_support.mean()
++        std_std = log_y_support.std()
++        y_query_std = (log_y_query - std_mean) / std_std
++
++        row: Dict[str, Any] = {"support_size": n}
++        log_parts: List[str] = []
++
++        # --- MPN timing(s) ---
++        for name, model in mpn_models.items():
++            support_pool_fps_t, query_fps_t = mpn_fp_cache[name]
++            support_fps_t = support_pool_fps_t[:n]
++
++            _call = partial(
++                mpn_fit_predict,
++                model,
++                support_fps_t,
++                query_fps_t,
++                y_support_pic50_t,
++            )
++            mean_s, median_s, std_s, preds_pic50 = _time_callable(
++                _call, device, args.repeats, warmup=args.warmup
++            )
++
++            preds_std = mpn_predictions_to_standardized_log(
++                preds_pic50, y_support_nM
++            )
++            r2 = compute_numeric_task_metrics(preds_std, y_query_std).r2
++
++            row[f"{name}_time_mean_s"] = mean_s
++            row[f"{name}_time_median_s"] = median_s
++            row[f"{name}_time_std_s"] = std_s
++            row[f"{name}_r2"] = r2
++            log_parts.append(
++                f"{name} {mean_s:.4f}s ± {std_s:.4f}"
++                f" (med {median_s:.4f}s, R2={r2:.3f})"
++            )
++
++        # --- Random-Forest timing ---
++        if args.rf:
++            assert rf_support_pool_X is not None and rf_query_X is not None
++            X_train_rf = rf_support_pool_X[:n]
++            # Standardize log-labels with the support-set's own stats, matching
++            # baseline_numeric_test.py.
++            y_train_std_rf = (np.log(y_support_nM) - std_mean) / std_std
++
++            _rf_call = partial(
++                rf_fit_predict,
++                X_train_rf,
++                rf_query_X,
++                y_train_std_rf,
++                RF_GRID_SEARCH,
++                args.rf_cv,
++                args.rf_jobs,
++            )
++            rf_mean, rf_median, rf_std, rf_preds = _time_callable(
++                _rf_call,
++                torch.device("cpu"),
++                args.rf_repeats,
++                warmup=0,
++            )
++            rf_r2 = compute_numeric_task_metrics(rf_preds, y_query_std).r2
++
++            row["rf_time_mean_s"] = rf_mean
++            row["rf_time_median_s"] = rf_median
++            row["rf_time_std_s"] = rf_std
++            row["rf_r2"] = rf_r2
++            log_parts.append(
++                f"RF {rf_mean:.4f}s ± {rf_std:.4f}"
++                f" (med {rf_median:.4f}s, R2={rf_r2:.3f})"
++            )
++
++        # --- ADKF timing ---
++        # Build DKT batch outside timing (equivalent to precomputing MPN FPs).
++        dkt_task_sample = build_adkf_batch(
++            support_samples=support_samples,
++            query_samples=query_samples,
++            task_name=task.name,
++            model=adkf_model,
++            use_numeric_labels=use_numeric,
++            max_batch_size=max(args.adkf_batch_size, n + len(query_samples)),
++        )
++
++        _adkf_call = partial(adkf_fit_predict, adkf_model, dkt_task_sample)
++        adkf_mean, adkf_median, adkf_std, adkf_r2 = _time_callable(
++            _adkf_call, device, args.repeats, warmup=args.warmup
++        )
++
++        row["adkf_time_mean_s"] = adkf_mean
++        row["adkf_time_median_s"] = adkf_median
++        row["adkf_time_std_s"] = adkf_std
++        row["adkf_r2"] = adkf_r2
++        log_parts.insert(
++            0,
++            f"ADKF {adkf_mean:.4f}s ± {adkf_std:.4f}"
++            f" (med {adkf_median:.4f}s, R2={adkf_r2:.3f})",
++        )
++
++        logger.info("n=%4d | %s", n, " | ".join(log_parts))
++        results.append(row)
++
++        # End-of-iteration cleanup: explicitly drop large per-iteration objects
++        # *before* the next iteration starts allocating its (larger) batch, so
++        # that two DKT batches don't coexist on the GPU during reassignment.
++        # We also ask the caching allocator to release blocks back to CUDA.
++        del dkt_task_sample
++        gc.collect()
++        if device.type == "cuda":
++            torch.cuda.empty_cache()
++
++    # ----- Save -----
++    if args.out:
++        # Stable column order: support_size first, then ADKF, then each MPN in
++        # the order they were configured, then RF.
++        ordered_keys: List[str] = ["support_size"]
++        for prefix in ["adkf"] + list(mpn_models.keys()) + (["rf"] if args.rf else []):
++            for suffix in ["time_mean_s", "time_median_s", "time_std_s", "r2"]:
++                col = f"{prefix}_{suffix}"
++                if col in results[0]:
++                    ordered_keys.append(col)
++        with open(args.out, "w", newline="") as f:
++            writer = csv.DictWriter(f, fieldnames=ordered_keys)
++            writer.writeheader()
++            writer.writerows(results)
++        logger.info("Wrote %d rows to %s", len(results), args.out)
++
++    return results
++
++
++def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
++    parser = argparse.ArgumentParser(
++        description=(
++            "Compare ADKF-IFT vs MPN (AttMPN, KernelMPN) vs Random Forest"
++            " fit+predict wall-clock time on a single FS-Mol task as the"
++            " support-set size grows."
++        ),
++        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
++    )
++    parser.add_argument(
++        "data_path",
++        type=str,
++        help="Path to the *.jsonl.gz file describing a single FS-Mol task.",
++    )
++    parser.add_argument(
++        "adkf_checkpoint",
++        type=str,
++        help="Path to the ADKF-IFT checkpoint (*.pt).",
++    )
++    parser.add_argument(
++        "--kernel-mpn-checkpoint",
++        type=str,
++        default=None,
++        help=(
++            "Path to a KernelMPN checkpoint (*.pth). If omitted,"
++            " KernelMPN is skipped."
++        ),
++    )
++    parser.add_argument(
++        "--att-mpn-checkpoint",
++        type=str,
++        default=None,
++        help=(
++            "Path to an AttMPN checkpoint (*.pth). If omitted, AttMPN is"
++            " skipped."
++        ),
++    )
++    parser.add_argument(
++        "--rf",
++        action=argparse.BooleanOptionalAction,
++        default=True,
++        help=(
++            "Whether to time a Random-Forest baseline (with the same grid"
++            " search as baseline_numeric_test.py). Disable with --no-rf."
++        ),
++    )
++    parser.add_argument(
++        "--query-fraction",
++        type=float,
++        default=0.3,
++        help="Fraction of samples to hold out as a fixed query set.",
++    )
++    parser.add_argument(
++        "--max-query-size",
++        type=int,
++        default=None,
++        help=(
++            "Optional cap on the query-set size. Use this to keep the query"
++            " set small (e.g. 100) while the support pool grows to thousands."
++        ),
++    )
++    parser.add_argument(
++        "--step",
++        type=int,
++        default=10,
++        help=(
++            "Support-size increment for the sweep (ignored if"
++            " --support-size-schedule is given)."
++        ),
++    )
++    parser.add_argument(
++        "--max-support-size",
++        type=int,
++        default=None,
++        help=(
++            "Cap on the support size when using --step. Defaults to the full"
++            " support pool. Ignored if --support-size-schedule is given."
++        ),
++    )
++    parser.add_argument(
++        "--support-size-schedule",
++        type=int,
++        nargs="+",
++        default=None,
++        metavar="N",
++        help=(
++            "Explicit list of support sizes to evaluate, e.g."
++            " '--support-size-schedule 16 32 64 128 256 512 1024 2048'."
++            " Overrides --step / --max-support-size when provided. Entries"
++            " larger than the available support pool are silently dropped."
++        ),
++    )
++    parser.add_argument(
++        "--repeats",
++        type=int,
++        default=3,
++        help=(
++            "Number of timed repeats per support size for ADKF and the MPN"
++            " models (after --warmup discarded warm-up calls)."
++        ),
++    )
++    parser.add_argument(
++        "--warmup",
++        type=int,
++        default=1,
++        help=(
++            "Number of warm-up calls (per support size) before timing begins"
++            " for ADKF / MPN. Use a higher value if you see the first timed"
++            " run dominating the reported mean at small support sizes."
++        ),
++    )
++    parser.add_argument(
++        "--rf-repeats",
++        type=int,
++        default=1,
++        help=(
++            "Number of timed repeats for the Random-Forest baseline. Defaults"
++            " to 1 because each call runs a full grid search and is already"
++            " expensive; raise it only if you have time to spare."
++        ),
++    )
++    parser.add_argument(
++        "--rf-cv",
++        type=int,
++        default=5,
++        help="K for K-fold CV inside Random-Forest grid search.",
++    )
++    parser.add_argument(
++        "--rf-jobs",
++        type=int,
++        default=-1,
++        help=(
++            "n_jobs for the Random-Forest grid search; -1 uses all cores."
++            " Useful to set to 1 for deterministic CPU timing."
++        ),
++    )
++    parser.add_argument(
++        "--seed",
++        type=int,
++        default=0,
++        help="Seed for shuffling samples into support pool / query.",
++    )
++    parser.add_argument(
++        "--adkf-batch-size",
++        type=int,
++        default=320,
++        help=(
++            "Maximum batch size for the ADKF DKT batcher. Automatically raised"
++            " if support+query exceeds this."
++        ),
++    )
++    parser.add_argument(
++        "--out",
++        type=str,
++        default=None,
++        help="Optional path to write a CSV of the timings.",
++    )
++    return parser.parse_args(argv)
++
++
++def main() -> None:
++    args = parse_args()
++    run_comparison(args)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/fs_mol/tabicl_test.py b/fs_mol/tabicl_test.py
+new file mode 100644
+index 0000000..68bebec
+--- /dev/null
++++ b/fs_mol/tabicl_test.py
+@@ -0,0 +1,161 @@
++#!/usr/bin/env python3
++"""Evaluate an off-the-shelf TabICL regressor on FS-Mol tasks.
++
++Mirrors ``tabpfn_test.py``, swapping TabPFN for TabICL. Like TabPFN, TabICL is a
++tabular foundation model trained on synthetic priors (not a chemistry-specific
++distribution), so no pIC50 conversion is applied: we fit on standardized
++``log(y)`` values, just like the sklearn baseline.
++"""
++import argparse
++import logging
++import sys
++
++import numpy as np
++from dpu_utils.utils import run_and_debug
++from pyprojroot import here as project_root
++from tabicl import TabICLRegressor
++
++sys.path.insert(0, str(project_root()))
++
++from fs_mol.data.fsmol_task import FSMolTaskSample
++from fs_mol.utils.chem_utils import compute_fingerprints
++from fs_mol.utils.metrics import NumericEvalMetrics, compute_numeric_task_metrics
++from fs_mol.utils.test_utils import (
++    eval_model,
++    add_eval_cli_args,
++    set_up_test_run,
++)
++
++logger = logging.getLogger(__name__)
++
++DEFAULT_FINGERPRINT_SIZE = 500
++
++
++def test(
++    task_sample: FSMolTaskSample,
++    fp_size: int,
++    n_estimators: int,
++    batch_size: int,
++    device: str = None,
++    seed: int = 42,
++) -> NumericEvalMetrics:
++    train_data = task_sample.train_samples
++    test_data = task_sample.test_samples
++
++    X_train = compute_fingerprints([x.smiles for x in train_data], fp_size)
++    X_test = compute_fingerprints([x.smiles for x in test_data], fp_size)
++
++    y_train = np.array([float(x.numeric_label) for x in train_data])
++    y_test = np.array([float(x.numeric_label) for x in test_data])
++
++    # Match baseline_numeric_test.py / tabpfn_test.py: operate in standardized
++    # log-space. TabICL was trained on synthetic priors so no chemistry-specific
++    # (pIC50) transform is needed — standardization is enough to keep the target
++    # well-scaled. (TabICL also standardizes y internally, but we keep the
++    # transform here so the reported metrics are on the same scale as the other
++    # numeric evaluations.)
++    log_y_train = np.log(y_train)
++    log_y_test = np.log(y_test)
++    standardize_mean = log_y_train.mean()
++    standardize_std = log_y_train.std()
++
++    log_y_train_standardized = (log_y_train - standardize_mean) / standardize_std
++    log_y_test_standardized = (log_y_test - standardize_mean) / standardize_std
++
++    logger.info(f" Evaluating TabICL with {X_train.shape[0]} training samples.")
++
++    model = TabICLRegressor(
++        n_estimators=n_estimators,
++        batch_size=batch_size,
++        device=device,
++        random_state=seed,
++    )
++    model.fit(X_train, log_y_train_standardized)
++    preds_standardized = model.predict(X_test)
++
++    test_metrics = compute_numeric_task_metrics(preds_standardized, log_y_test_standardized)
++    logger.info(f" Test metrics: {test_metrics}")
++
++    return test_metrics
++
++
++def run_from_args(args) -> None:
++    out_dir, dataset = set_up_test_run("TabICL", args)
++
++    def test_model_fn(
++        task_sample: FSMolTaskSample, temp_out_folder: str, seed: int
++    ) -> NumericEvalMetrics:
++        return test(
++            task_sample=task_sample,
++            fp_size=args.fingerprint_size,
++            n_estimators=args.n_estimators,
++            batch_size=args.batch_size,
++            device=args.device,
++            seed=seed,
++        )
++
++    eval_model(
++        test_model_fn=test_model_fn,
++        dataset=dataset,
++        train_set_sample_sizes=args.train_sizes,
++        out_dir=out_dir,
++        num_samples=args.num_runs,
++        test_size_or_ratio=args.test_size,
++        seed=args.seed,
++        filter_numeric_labels=True,
++    )
++
++
++def run():
++    parser = argparse.ArgumentParser(
++        description="Evaluate an off-the-shelf TabICL regressor on FS-Mol tasks.",
++        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
++    )
++
++    add_eval_cli_args(parser)
++
++    parser.add_argument(
++        "--fingerprint-size",
++        type=int,
++        default=DEFAULT_FINGERPRINT_SIZE,
++        help=(
++            "Morgan fingerprint length fed to TabICL. Unlike TabPFN, TabICL has no"
++            " hard feature-count limit, but the default matches tabpfn_test.py so"
++            " the two are directly comparable."
++        ),
++    )
++    parser.add_argument(
++        "--n-estimators",
++        type=int,
++        default=8,
++        help="Number of ensemble members (dataset views) TabICL averages over.",
++    )
++    parser.add_argument(
++        "--batch-size",
++        type=int,
++        default=2,
++        help=(
++            "How many ensemble members TabICL processes at once. This is the dominant"
++            " memory knob: peak usage is driven by a column-embedding tensor of shape"
++            " (batch_size, n_train + n_test, fingerprint_size, 128) in float32, so the"
++            " library default of 8 needs ~7 GB on the largest FS-Mol tasks. Lowering it"
++            " trades speed for memory and leaves predictions unchanged."
++        ),
++    )
++    parser.add_argument(
++        "--device",
++        type=str,
++        default=None,
++        help=(
++            "Torch device for inference ('cuda', 'cpu', 'mps'). Defaults to CUDA if"
++            " available, otherwise CPU; MPS must be requested explicitly."
++        ),
++    )
++    parser.add_argument("--debug", dest="debug", action="store_true", help="Enable debug routines")
++
++    args = parser.parse_args()
++    run_and_debug(lambda: run_from_args(args), args.debug)
++
++
++if __name__ == "__main__":
++    run()
+diff --git a/fs_mol/tabpfn_test.py b/fs_mol/tabpfn_test.py
+new file mode 100644
+index 0000000..35ef81e
+--- /dev/null
++++ b/fs_mol/tabpfn_test.py
+@@ -0,0 +1,113 @@
++#!/usr/bin/env python3
++"""Evaluate an off-the-shelf TabPFN regressor on FS-Mol tasks.
++
++Mirrors the evaluation loop used in ``mpn_test.py`` / ``baseline_numeric_test.py``
++but with TabPFN in place of a molecule-specific model. Since TabPFN is trained on
++synthetic tabular priors (not a chemistry-specific distribution), no pIC50
++conversion is applied: we simply fit on standardized ``log(y)`` values, just
++like the sklearn baseline.
++"""
++import argparse
++import logging
++import sys
++
++import numpy as np
++from dpu_utils.utils import run_and_debug
++from pyprojroot import here as project_root
++from tabpfn import TabPFNRegressor
++from tabpfn.constants import ModelVersion
++
++sys.path.insert(0, str(project_root()))
++
++from fs_mol.data.fsmol_task import FSMolTaskSample
++from fs_mol.utils.chem_utils import compute_fingerprints
++from fs_mol.utils.metrics import NumericEvalMetrics, compute_numeric_task_metrics
++from fs_mol.utils.test_utils import (
++    eval_model,
++    add_eval_cli_args,
++    set_up_test_run,
++)
++
++logger = logging.getLogger(__name__)
++
++DEFAULT_FINGERPRINT_SIZE = 500
++
++
++def test(task_sample: FSMolTaskSample, fp_size: int) -> NumericEvalMetrics:
++    train_data = task_sample.train_samples
++    test_data = task_sample.test_samples
++
++    X_train = compute_fingerprints([x.smiles for x in train_data], fp_size)
++    X_test = compute_fingerprints([x.smiles for x in test_data], fp_size)
++
++    y_train = np.array([float(x.numeric_label) for x in train_data])
++    y_test = np.array([float(x.numeric_label) for x in test_data])
++
++    # Match baseline_numeric_test.py: operate in standardized log-space. TabPFN
++    # was trained on synthetic priors so no chemistry-specific (pIC50) transform
++    # is needed — standardization is enough to keep the target well-scaled.
++    log_y_train = np.log(y_train)
++    log_y_test = np.log(y_test)
++    standardize_mean = log_y_train.mean()
++    standardize_std = log_y_train.std()
++
++    log_y_train_standardized = (log_y_train - standardize_mean) / standardize_std
++    log_y_test_standardized = (log_y_test - standardize_mean) / standardize_std
++
++    logger.info(f" Evaluating TabPFN with {X_train.shape[0]} training samples.")
++
++    model = TabPFNRegressor.create_default_for_version(ModelVersion.V2)
++    model.fit(X_train, log_y_train_standardized)
++    preds_standardized = model.predict(X_test)
++
++    test_metrics = compute_numeric_task_metrics(preds_standardized, log_y_test_standardized)
++    logger.info(f" Test metrics: {test_metrics}")
++
++    return test_metrics
++
++
++def run_from_args(args) -> None:
++    out_dir, dataset = set_up_test_run("TabPFNv2", args)
++
++    def test_model_fn(
++        task_sample: FSMolTaskSample, temp_out_folder: str, seed: int
++    ) -> NumericEvalMetrics:
++        return test(task_sample=task_sample, fp_size=args.fingerprint_size)
++
++    eval_model(
++        test_model_fn=test_model_fn,
++        dataset=dataset,
++        train_set_sample_sizes=args.train_sizes,
++        out_dir=out_dir,
++        num_samples=args.num_runs,
++        test_size_or_ratio=args.test_size,
++        seed=args.seed,
++        filter_numeric_labels=True,
++    )
++
++
++def run():
++    parser = argparse.ArgumentParser(
++        description="Evaluate an off-the-shelf TabPFN regressor on FS-Mol tasks.",
++        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
++    )
++
++    add_eval_cli_args(parser)
++
++    parser.add_argument(
++        "--fingerprint-size",
++        type=int,
++        default=DEFAULT_FINGERPRINT_SIZE,
++        help=(
++            "Morgan fingerprint length fed to TabPFN. TabPFN has a feature-count"
++            " limit (500 by default), so keep this moderate."
++        ),
++    )
++    parser.add_argument("--debug", dest="debug", action="store_true", help="Enable debug routines")
++
++    args = parser.parse_args()
++    run_and_debug(lambda: run_from_args(args), args.debug)
++
++
++if __name__ == "__main__":
++    run()
+diff --git a/fs_mol/utils/adaptive_dkt_utils.py b/fs_mol/utils/adaptive_dkt_utils.py
+index 48ae4c2..efbae81 100644
+--- a/fs_mol/utils/adaptive_dkt_utils.py
++++ b/fs_mol/utils/adaptive_dkt_utils.py
+@@ -34,7 +34,7 @@ from fs_mol.utils.metric_logger import MetricLogger
+ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.test_utils import eval_model
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from fs_mol.utils.cauchy_hypergradient import cauchy_hypergradient
+ from fs_mol.utils.cauchy_hypergradient_jvp import cauchy_hypergradient_jvp
+@@ -88,7 +88,7 @@ def run_on_batches(
+         # Compute task loss
+         model.train()
+         _ = model(batch_features, train_loss=True)
+-        fit_gpytorch_scipy(model.mll)
++        fit_gpytorch_mll_scipy(model.mll)
+ 
+         # Compute train loss on the support set at training time
+         if not train:
+@@ -246,12 +246,21 @@ class ADKTModelTrainer(ADKTModel):
+         quiet: bool = False,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
++        own_state = self.state_dict()
+         for name, param in pretrained_state_dict["model_state_dict"].items():
+             if isinstance(param, torch.nn.Parameter):
+                 param = param.data
+-            self.state_dict()[name].copy_(param)
++            if name not in own_state:
++                # Checkpoints trained under recent GPyTorch versions carry buffered prior
++                # parameters (e.g. the lengthscale prior registered in reinit_gp_params,
++                # which only exists once a support set has been seen). They are recomputed
++                # per task at evaluation time, so skipping them here is safe.
++                if not quiet:
++                    logger.warning(f"Skipping checkpoint key absent from the model: {name}.")
++                continue
++            own_state[name].copy_(param)
+ 
+         optimizer_weights = pretrained_state_dict.get("optimizer_state_dict")
+         if optimizer_weights is not None:
+@@ -263,7 +272,7 @@ class ADKTModelTrainer(ADKTModel):
+         path: str,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         gnn_model_state_dict = pretrained_state_dict["model_state_dict"]
+         our_state_dict = self.state_dict()
+@@ -311,7 +320,7 @@ class ADKTModelTrainer(ADKTModel):
+         device: Optional[torch.device] = None,
+     ) -> "ADKTModelTrainer":
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         if not quiet:
+diff --git a/fs_mol/utils/adaptive_dkt_vgp_utils.py b/fs_mol/utils/adaptive_dkt_vgp_utils.py
+index 031ff28..b9ab194 100644
+--- a/fs_mol/utils/adaptive_dkt_vgp_utils.py
++++ b/fs_mol/utils/adaptive_dkt_vgp_utils.py
+@@ -32,7 +32,7 @@ from fs_mol.utils.metric_logger import MetricLogger
+ from fs_mol.utils.torch_utils import torchify
+ from fs_mol.utils.test_utils import eval_model, FSMolTaskSampleEvalResults
+ 
+-from botorch.optim.fit import fit_gpytorch_scipy
++from botorch.optim.fit import fit_gpytorch_mll_scipy
+ 
+ from fs_mol.utils.cauchy_hypergradient import cauchy_hypergradient
+ from fs_mol.utils.cauchy_hypergradient_jvp import cauchy_hypergradient_jvp
+@@ -83,7 +83,7 @@ def run_on_batches(
+         # Compute task loss
+         model.train()
+         _ = model(batch_features, train_loss=True)
+-        fit_gpytorch_scipy(model.mll)
++        fit_gpytorch_mll_scipy(model.mll)
+ 
+         # Compute train loss on the support set at training time
+         if not train:
+@@ -220,7 +220,7 @@ class ADKTVGPModelTrainer(ADKTVGPModel):
+         quiet: bool = False,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         for name, param in pretrained_state_dict["model_state_dict"].items():
+             if isinstance(param, torch.nn.Parameter):
+@@ -237,7 +237,7 @@ class ADKTVGPModelTrainer(ADKTVGPModel):
+         path: str,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         gnn_model_state_dict = pretrained_state_dict["model_state_dict"]
+         our_state_dict = self.state_dict()
+@@ -285,7 +285,7 @@ class ADKTVGPModelTrainer(ADKTVGPModel):
+         device: Optional[torch.device] = None,
+     ) -> "ADKTVGPModelTrainer":
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         if not quiet:
+diff --git a/fs_mol/utils/chem_utils.py b/fs_mol/utils/chem_utils.py
+index 1b9862e..d65db77 100644
+--- a/fs_mol/utils/chem_utils.py
++++ b/fs_mol/utils/chem_utils.py
+@@ -1,4 +1,6 @@
+-from rdkit import DataStructs
++from functools import lru_cache
++
++from rdkit import Chem, DataStructs
+ from rdkit.Chem import (
+     MolFromSmiles,
+     rdFingerprintGenerator,
+@@ -6,15 +8,64 @@ from rdkit.Chem import (
+ import numpy as np
+ 
+ 
++def mol_from_smiles(smiles: str):
++    """Parse SMILES, falling back to unsanitized parsing for e.g. hypervalent atoms."""
++    mol = MolFromSmiles(smiles)
++    if mol is None:
++        mol = MolFromSmiles(smiles, sanitize=False)
++        mol.UpdatePropertyCache(strict=False)
++        Chem.FastFindRings(mol)
++    return mol
++
++
++@lru_cache(maxsize=None)
++def _morgan_generator(fp_size: int, radius: int = 2):
++    """Cache the generator itself — constructing one per call is pure overhead."""
++    return rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=fp_size)
++
++
++@lru_cache(maxsize=None)
++def compute_fingerprint(smiles: str, fp_size: int, radius: int = 2) -> np.ndarray:
++    """Morgan bit fingerprint for a single SMILES, memoized on (smiles, fp_size, radius).
++
++    The evaluation loops re-sample the same molecules across train sizes, repeats and
++    tasks, so the cache turns most fingerprint work into a dict lookup. Entries are
++    stored as ``uint8`` (1 byte per bit rather than 4) and marked read-only, since the
++    same array object is handed back to every caller; callers cast when stacking.
++
++    The cache is unbounded: at ``fp_size=500`` it costs ~500 bytes per distinct
++    molecule, so a full FS-Mol pass is on the order of a hundred MB.
++    """
++    fp = _morgan_generator(fp_size, radius).GetFingerprint(mol_from_smiles(smiles))
++    arr = np.zeros((0,), dtype=np.uint8)
++    DataStructs.ConvertToNumpyArray(fp, arr)
++    arr.setflags(write=False)
++    return arr
++
++
++def compute_fingerprints(smiles_list, fp_size, radius: int = 2) -> np.ndarray:
++    """Stack memoized Morgan (radius=2 by default) bit fingerprints into a float32 matrix."""
++    return np.array(
++        [compute_fingerprint(smi, fp_size, radius) for smi in smiles_list], dtype=np.float32
++    )
++
++
+ # The fingerprints provided in FS-Mol are count-based,
+ # which cannot be used as inputs to the Tanimoto kernel.
+ # This function returns a list of binary fingerprints (using count simulation by default).
+ def get_binary_fingerprints(data, use_count_simulation=True):
+-    fpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048, useCountSimulation=use_count_simulation)
++    fpgen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048, countSimulation=use_count_simulation)
+     fp_list = []
+ 
+     for x in data:
+         rdkit_mol = MolFromSmiles(x.smiles)
++        if rdkit_mol is None:
++            # Fallback for SMILES that fail RDKit's default sanitization
++            # (e.g. hypervalent atoms). Matches the pattern used elsewhere
++            # in this repo (see runtime_comparison.py / mpn_test.py).
++            rdkit_mol = MolFromSmiles(x.smiles, sanitize=False)
++            rdkit_mol.UpdatePropertyCache(strict=False)
++            Chem.FastFindRings(rdkit_mol)
+         fp_vec = fpgen.GetFingerprint(rdkit_mol)
+         fp_numpy = np.zeros((0,), np.int8) 
+         DataStructs.ConvertToNumpyArray(fp_vec, fp_numpy)
+diff --git a/fs_mol/utils/cnp_utils.py b/fs_mol/utils/cnp_utils.py
+index aaa2d1e..af661af 100644
+--- a/fs_mol/utils/cnp_utils.py
++++ b/fs_mol/utils/cnp_utils.py
+@@ -252,7 +252,7 @@ class CNPModelTrainer(CNPModel):
+         quiet: bool = False,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         for name, param in pretrained_state_dict["model_state_dict"].items():
+             if isinstance(param, torch.nn.Parameter):
+@@ -269,7 +269,7 @@ class CNPModelTrainer(CNPModel):
+         path: str,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         gnn_model_state_dict = pretrained_state_dict["model_state_dict"]
+         our_state_dict = self.state_dict()
+@@ -317,7 +317,7 @@ class CNPModelTrainer(CNPModel):
+         device: Optional[torch.device] = None,
+     ) -> "CNPModelTrainer":
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         if not quiet:
+diff --git a/fs_mol/utils/dkt_utils.py b/fs_mol/utils/dkt_utils.py
+index d292544..1f6a686 100644
+--- a/fs_mol/utils/dkt_utils.py
++++ b/fs_mol/utils/dkt_utils.py
+@@ -255,7 +255,7 @@ class DKTModelTrainer(DKTModel):
+         quiet: bool = False,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         for name, param in pretrained_state_dict["model_state_dict"].items():
+             if isinstance(param, torch.nn.Parameter):
+@@ -272,7 +272,7 @@ class DKTModelTrainer(DKTModel):
+         path: str,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         gnn_model_state_dict = pretrained_state_dict["model_state_dict"]
+         our_state_dict = self.state_dict()
+@@ -320,7 +320,7 @@ class DKTModelTrainer(DKTModel):
+         device: Optional[torch.device] = None,
+     ) -> "DKTModelTrainer":
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         if not quiet:
+diff --git a/fs_mol/utils/gp_utils.py b/fs_mol/utils/gp_utils.py
+index 36b7894..7997372 100644
+--- a/fs_mol/utils/gp_utils.py
++++ b/fs_mol/utils/gp_utils.py
+@@ -43,6 +43,9 @@ class ExactGPLayer(gpytorch.models.ExactGP):
+             raise ValueError("[ERROR] the kernel '" + str(kernel) + "' is not supported!")
+ 
+ 
++    def transform_inputs(self, X, feature_names=None):
++        return X
++
+     def forward(self, x):
+         mean_x = self.mean_module(x)
+         covar_x = self.covar_module(x)
+@@ -147,6 +150,9 @@ class ExactTanimotoGP(gpytorch.models.ExactGP):
+         self.mean_module = gpytorch.means.ZeroMean()
+         self.covar_module = gpytorch.kernels.ScaleKernel(TanimotoKernel())
+ 
++    def transform_inputs(self, X, feature_names=None):
++        return X
++
+     def forward(self, x):
+         mean_x = self.mean_module(x)
+         covar_x = self.covar_module(x)
+diff --git a/fs_mol/utils/metrics.py b/fs_mol/utils/metrics.py
+index 8fe9eb9..50f3888 100644
+--- a/fs_mol/utils/metrics.py
++++ b/fs_mol/utils/metrics.py
+@@ -4,6 +4,7 @@ from typing_extensions import Literal
+ from dataclasses import dataclass
+ 
+ import numpy as np
++from scipy.stats import kendalltau
+ from sklearn.metrics import (
+     precision_score,
+     recall_score,
+@@ -112,10 +113,11 @@ class NumericEvalMetrics:
+     mse: float
+     mae: float
+     r2: float
++    kendall_tau: float
+ 
+ 
+ NumericMetricType = Literal[
+-    "mse", "mae", "r2"
++    "mse", "mae", "r2", "kendall_tau"
+ ]
+ 
+ 
+@@ -139,11 +141,13 @@ def r2_score_os(y_true, y_pred, y_train_mean=0.0):
+ 
+ def compute_numeric_task_metrics(predictions: List[float], labels: List[float]) -> NumericEvalMetrics:
+     assert len(predictions) == len(labels)
++    tau, _ = kendalltau(labels, predictions)
+     return NumericEvalMetrics(
+         size=len(predictions),
+         mse=float(mean_squared_error(y_true=labels, y_pred=predictions)),
+         mae=float(mean_absolute_error(y_true=labels, y_pred=predictions)),
+-        r2=float(r2_score_os(y_true=labels, y_pred=predictions))
++        r2=float(r2_score_os(y_true=labels, y_pred=predictions)),
++        kendall_tau=float(tau) if np.isfinite(tau) else 0.0,
+     )
+ 
+ 
+diff --git a/fs_mol/utils/par_utils.py b/fs_mol/utils/par_utils.py
+index 220d234..c737c7a 100644
+--- a/fs_mol/utils/par_utils.py
++++ b/fs_mol/utils/par_utils.py
+@@ -365,7 +365,7 @@ class PARModelTrainer(PARModel):
+         quiet: bool = False,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         for name, param in pretrained_state_dict["model_state_dict"].items():
+             if isinstance(param, torch.nn.Parameter):
+@@ -382,7 +382,7 @@ class PARModelTrainer(PARModel):
+         path: str,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         gnn_model_state_dict = pretrained_state_dict["model_state_dict"]
+         our_state_dict = self.state_dict()
+@@ -430,7 +430,7 @@ class PARModelTrainer(PARModel):
+         device: Optional[torch.device] = None,
+     ) -> "PARModelTrainer":
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         if not quiet:
+diff --git a/fs_mol/utils/protonet_utils.py b/fs_mol/utils/protonet_utils.py
+index d57e595..4569509 100644
+--- a/fs_mol/utils/protonet_utils.py
++++ b/fs_mol/utils/protonet_utils.py
+@@ -210,7 +210,7 @@ class PrototypicalNetworkTrainer(PrototypicalNetwork):
+         quiet: bool = False,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         for name, param in pretrained_state_dict["model_state_dict"].items():
+             if isinstance(param, torch.nn.Parameter):
+@@ -227,7 +227,7 @@ class PrototypicalNetworkTrainer(PrototypicalNetwork):
+         path: str,
+         device: Optional[torch.device] = None,
+     ):
+-        pretrained_state_dict = torch.load(path, map_location=device)
++        pretrained_state_dict = torch.load(path, map_location=device, weights_only=False)
+ 
+         gnn_model_state_dict = pretrained_state_dict["model_state_dict"]
+         our_state_dict = self.state_dict()
+@@ -275,7 +275,7 @@ class PrototypicalNetworkTrainer(PrototypicalNetwork):
+         device: Optional[torch.device] = None,
+     ) -> "PrototypicalNetworkTrainer":
+         """Build the model architecture based on a saved checkpoint."""
+-        checkpoint = torch.load(model_file, map_location=device)
++        checkpoint = torch.load(model_file, map_location=device, weights_only=False)
+         config = checkpoint["model_config"]
+ 
+         if not quiet:
+diff --git a/fs_mol/utils/test_utils.py b/fs_mol/utils/test_utils.py
+index 6f0c2d2..a181fca 100644
+--- a/fs_mol/utils/test_utils.py
++++ b/fs_mol/utils/test_utils.py
+@@ -215,6 +215,7 @@ def write_csv_summary_numeric(output_csv_file: str, test_results: Iterable[FSMol
+             "mse",
+             "mae",
+             "r2",
++            "kendall_tau",
+         ]
+         csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+         csv_writer.writeheader()
+@@ -229,6 +230,7 @@ def write_csv_summary_numeric(output_csv_file: str, test_results: Iterable[FSMol
+                     "mse": test_result.mse,
+                     "mae": test_result.mae,
+                     "r2": test_result.r2,
++                    "kendall_tau": test_result.kendall_tau,
+                 }
+             )
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 90c726e..0617686 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,3 +1,43 @@
++[project]
++name = "adkf-ift-fsmol"
++version = "0.1.0"
++description = "Adaptive Deep Kernel Fitting with Implicit Function Theorem"
++requires-python = ">=3.10"
++dependencies = [
++    "torch>=1.12.0",
++    "gpytorch>=1.6.0",
++    "botorch>=0.6.0",
++    "rdkit>=2022.3.1",
++    "numpy>=1.22.0",
++    "pandas>=1.4.0",
++    "matplotlib>=3.5.0",
++    "scikit-learn>=1.0.0",
++    "seaborn>=0.11.0",
++    "tqdm>=4.64.0",
++    "typing-extensions>=4.0.0",
++    "tensorflow>=2.8.0",
++    "tf2-gnn~=2.12.0",
++    "dpu-utils>=0.2.13",
++    "docopt>=0.6.2",
++    "more-itertools>=8.12.0",
++    "mysql-connector-python==8.0.17",
++    "pyprojroot>=0.2.0",
++    "py-repo-root~=1.1.1",
++    "xlsxwriter>=3.0.0",
++    "autorank>=1.1.0",
++    "azureml-core>=1.40.0",
++    "openpyxl>=3.0.0",
++    "torch-scatter>=2.0.9",
++]
++
++[tool.uv]
++dev-dependencies = [
++    "black==22.3.0",
++    "flake8==4.0.1",
++    "pytest>=7.0.0",
++    "ipykernel>=6.0.0",
++]
++
+ [tool.black]
+ line-length = 100
+-target-version = ['py37']
+\ No newline at end of file
++target-version = ['py310']

@@ -1,0 +1,39 @@
+---
+# Example configuration for scripts/train.py. Point train_dir/val_dir at the
+# train/ and valid/ subdirectories of an unpacked FS-Mol dataset.
+train_dir: "data/fs-mol/train/"
+val_dir: "data/fs-mol/valid/"
+
+# The released checkpoints use 2048-bit Morgan fingerprints of radius 2.
+fingerprint_size: 2048
+learning_rate: 0.001
+epochs: 5
+
+# model: "AttMPN"  # or "KernelMPN"
+# hidden_size: 128
+# n_layers: 1
+# batch_size: 1
+# output_path: "best_model.pth"
+# checkpoint_path: "best_model.pth"  # resume from an existing checkpoint
+
+# AttMPN only: predict mean + log-variance and train with Gaussian NLL instead
+# of MSE. Also logs a "Validation NLL" metric. Checkpoint selection still uses
+# Validation MAE.
+# predict_variance: false
+
+# Restrict training/validation to named subsets of the data directories. The
+# partition file is JSON mapping a partition name to a list of dataset ids
+# (file basenames without extensions, e.g. "CHEMBL1613777").
+#
+# Without these keys, training uses every *.jsonl.gz file in train_dir. For
+# FS-Mol that is the full assay pool (26,868 assays), NOT the official training
+# split (4,938). To train on the official split, point partition_file at
+# FS-Mol's own datasets/fsmol-0.1.json and name the partitions:
+# partition_file: "data/fsmol-0.1.json"
+# train_partition: "train"
+# val_partition: "valid"
+
+# Optional MLflow tracking. Both keys must be set for metrics to be logged;
+# tracking_uri may also come from the MLFLOW_TRACKING_URI environment variable.
+# experiment_name: "molpriornet"
+# tracking_uri: "http://localhost:5000"
